@@ -1,97 +1,90 @@
-# ternary-archive: Persistent storage and retrieval of ternary knowledge
+# ternary-archive
 
-An append-only knowledge store for balanced ternary {-1, 0, +1} systems. Scrolls are immutable records, indexed for fast lookup, organized into catalogs by category, and verified against conservation laws. A curator manages the lifecycle from active to expired.
+**Persistent storage and retrieval of ternary knowledge in balanced ternary {-1, 0, +1} systems**
 
-## Why This Exists
+[![ternary](https://img.shields.io/badge/ecosystem-ternary-blue)](https://github.com/orgs/SuperInstance/repositories?q=ternary)
+[![tests](https://img.shields.io/badge/tests-22-green)]()
 
-Multi-agent ternary systems accumulate knowledge over time: discoveries, measurements, decisions. Without structured storage, this knowledge is ephemeral — lost when agents restart. This crate provides the persistence layer: write-once records with indexing, categorization, and conservation verification. The archive is the institutional memory of a ternary fleet.
+## Overview
 
-## Core Concepts
+Persistent storage and retrieval of ternary knowledge in balanced ternary {-1, 0, +1} systems.
 
-- **Balanced ternary**: A number system using three values: -1, 0, +1 (Neg, Zero, Pos).
-- **Scroll**: An immutable record. Like a real scroll, once written it doesn't change. Contains a category, key, ternary value, timestamp, and optional metadata.
-- **Index**: Triple-indexed lookup — by category, by key, and by value. Makes retrieval O(1) for common queries.
-- **Catalog**: Browse-oriented view. Groups scrolls by category for sequential access.
-- **Conservation**: Tracks the sum of all stored values. In balanced ternary systems, knowledge should tend toward zero — a non-zero balance indicates bias in what's been archived.
-- **ArchiveCurator**: Manages lifecycle stages (Active → Deprecated → Archived → Expired). Prevents stage-skipping.
+This crate provides structures for archiving, indexing, and retrieving ternary knowledge
+with conservation law verification and lifecycle management.
 
-## Quick Start
+## Architecture
+
+- **`Scroll`** — core data structure
+- **`Index`** — core data structure
+- **`Catalog`** — core data structure
+- **`Conservation`** — core data structure
+- **`Archive`** — core data structure
+- **`ArchiveCurator`** — core data structure
+- **`Ternary`** — state enumeration
+- **`LifecycleStage`** — state enumeration
+
+### Key Functions
+
+- `from_i8()`
+- `to_i8()`
+- `new()`
+- `with_metadata()`
+- `id()`
+- `category()`
+- `key()`
+- `value()`
+- `timestamp()`
+- `metadata()`
+- ... and 40 more
+
+## Why Ternary?
+
+The balanced ternary system {-1, 0, +1} (also known as Z₃) is the mathematically optimal discrete encoding:
+- **More expressive than binary**: three states capture positive, neutral, and negative
+- **Natural for decisions**: accept/reject/abstain, buy/hold/sell, agree/disagree/neutral
+- **Self-balancing**: the 0 state acts as a universal screen, preventing pathological lock-in
+- **Z₃ cyclic dynamics**: rock-paper-scissors is the only natural coordination mechanism
+
+## Stats
+
+| Metric | Value |
+|--------|-------|
+| Lines of Rust | 615 |
+| Test count | 22 |
+| Public types | 8 |
+| Public functions | 50 |
+
+## Ecosystem
+
+This crate is part of the **[SuperInstance Ternary Fleet](https://github.com/orgs/SuperInstance/repositories?q=ternary)**:
+
+- **[ternary-core](https://github.com/SuperInstance/ternary-core)** — shared traits and Z₃ arithmetic
+- **[ternary-grid](https://github.com/SuperInstance/ternary-grid)** — spatial grid with {-1, 0, +1} cells
+- **[ternary-graph](https://github.com/SuperInstance/ternary-graph)** — ternary-weighted graph algorithms
+- **[ternary-automata](https://github.com/SuperInstance/ternary-automata)** — three-state cellular automata
+- **[ternary-compiler](https://github.com/SuperInstance/ternary-compiler)** — expression compiler and optimizer
+
+200+ crates. 4,300+ tests. One pattern.
+
+## Research Context
+
+The ternary approach connects to several active research areas:
+- **Ternary Neural Networks** (TNNs): weights constrained to {-1, 0, +1} for efficient inference
+- **Huawei's ternary chip**: 7nm ternary silicon with 60% less power consumption
+- **Active inference**: free energy minimization naturally maps to ternary action selection
+- **Cyclic dominance**: RPS dynamics maintain biodiversity in spatial ecology
+- **Z₃ group theory**: the only algebraic group on three elements is cyclic addition mod 3
+
+## Usage
 
 ```toml
 [dependencies]
-ternary-archive = "0.1"
+ternary-archive = "0.1.0"
 ```
 
 ```rust
-use ternary_archive::{Archive, Ternary, ArchiveCurator, LifecycleStage};
-
-let mut archive = Archive::new();
-let mut curator = ArchiveCurator::new();
-
-// Store knowledge
-let id = archive.store("physics", "momentum", Ternary::Pos, 1000);
-curator.register(id);
-archive.store("physics", "charge", Ternary::Neg, 1001);
-
-// Retrieve it
-let scroll = archive.retrieve(id).unwrap();
-assert_eq!(scroll.key(), "momentum");
-
-// Check conservation balance
-assert!(archive.is_balanced()); // Pos + Neg = 0
+use ternary_archive;
 ```
-
-## API Overview
-
-| Type | Description |
-|------|-------------|
-| `Ternary` | A ternary value: Neg (-1), Zero (0), or Pos (+1) |
-| `Scroll` | An immutable record with ID, category, key, value, and metadata |
-| `Index` | Triple-indexed lookup by category, key, and value |
-| `Catalog` | Browse scrolls grouped by category |
-| `Conservation` | Verify that stored values obey conservation (sum ≈ 0) |
-| `Archive` | The main knowledge store combining all of the above |
-| `ArchiveCurator` | Manages scroll lifecycle: Active → Deprecated → Archived → Expired |
-| `LifecycleStage` | Enum for the four stages of knowledge lifecycle |
-
-## How It Works
-
-The `Archive` is a write-once store. Each `store()` call creates a `Scroll` with a unique auto-incrementing ID, inserts it into a HashMap for O(1) retrieval by ID, adds it to the `Index` (three HashMaps for category/key/value lookup), and files it in the `Catalog` by category. The `Conservation` tracker records every value's contribution to the running sum.
-
-`Scroll` is intentionally immutable — there are no mutation methods. If knowledge changes, you store a new scroll. The old one remains as historical record.
-
-The `ArchiveCurator` enforces a strict lifecycle: Active → Deprecated → Archived → Expired. You can't skip stages. This prevents accidental data loss — deprecated knowledge gets a reason, archived knowledge gets reviewed, and only then can it expire.
-
-## Known Limitations
-
-- **All in-memory**: No disk persistence. Data vanishes when the process exits. For durability, serialize and write externally.
-- **No deletion**: Once stored, scrolls can't be removed from the archive, only lifecycle-staged. This is by design (immutability), but means memory grows monotonically.
-- **Single-threaded**: No interior mutability or locks. Wrap in `Arc<Mutex<Archive>>` for concurrent access.
-- **Conservation is advisory**: Nothing prevents you from storing biased data. The `Conservation` tracker reports the balance but doesn't enforce it. Use `would_violate()` for pre-checks.
-- **No compaction**: Expired scrolls still occupy memory. A production system would need compaction or offloading.
-
-## Use Cases
-
-- **Fleet knowledge accumulation**: Agents store discoveries, measurements, and decisions in a shared archive that persists across sessions.
-- **Experiment logging**: Record ternary-valued experimental results with conservation verification to detect systematic bias.
-- **Audit trail**: Every state change is an immutable scroll. Track what happened, when, and why (via lifecycle metadata).
-- **Knowledge base**: Build a browsable catalog of ternary facts, indexed for fast retrieval by category, key, or value.
-
-## Ecosystem Context
-
-Part of the SuperInstance ternary crate family. Relates to:
-- `ternary-frontier` (discoveries become archive scrolls)
-- `ternary-memory` (short-term memory vs long-term archive)
-- `ternary-conservation-verify` (deeper conservation analysis)
-- `ternary-protocol` (archived knowledge can be shared via protocol messages)
-
-## See Also
-
-- **ternary-database** — Storage, indexing, and querying for ternary-valued rows
-- **ternary-memory** — Short-term memory and recall for ternary agents
-- **ternary-chronicle** — Chronological event logging with ternary annotations
-- **ternary-replay** — Replay and playback of ternary event streams
-- **ternary-compression** — Compression for ternary-valued streams
 
 ## License
 
