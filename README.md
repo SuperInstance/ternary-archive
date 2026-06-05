@@ -85,6 +85,14 @@ Part of the SuperInstance ternary crate family. Relates to:
 - `ternary-conservation-verify` (deeper conservation analysis)
 - `ternary-protocol` (archived knowledge can be shared via protocol messages)
 
+## See Also
+
+- **ternary-database** — Storage, indexing, and querying for ternary-valued rows
+- **ternary-memory** — Short-term memory and recall for ternary agents
+- **ternary-chronicle** — Chronological event logging with ternary annotations
+- **ternary-replay** — Replay and playback of ternary event streams
+- **ternary-compression** — Compression for ternary-valued streams
+
 ## License
 
 MIT
