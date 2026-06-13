@@ -85,6 +85,39 @@ Ternary Archive provides the knowledge persistence layer for SuperInstance. In �
 
 See [ARCHITECTURE.md](https://github.com/SuperInstance/SuperInstance/blob/main/ARCHITECTURE.md) for knowledge management architecture.
 
+
+### Catalog Browsing
+
+```rust
+Catalog { entries: HashMap<String, Vec<Scroll>> }
+
+browse(category) → &[Scroll]    — O(1) HashMap lookup
+categories() → Vec<&str>        — O(C) for C categories
+```
+
+The catalog groups scrolls by category for human-friendly exploration and discovery.
+
+### Conservation Verification
+
+The `Conservation` tracker maintains:
+
+```
+balance = Σ scroll.value for all active scrolls    — O(N) computation
+is_balanced() → |balance| ≤ tolerance               — O(1) check
+```
+
+Violations indicate data corruption: if balance shifts unexpectedly, an unauthorized modification occurred. The tolerance is configurable — strict (0) for critical archives, loose (±N) for noisy environments.
+
+### Lifecycle Enforcement
+
+The `ArchiveCurator` enforces strict one-way transitions:
+
+```
+Active → deprecate(reason) → Deprecated → archive() → Archived → expire() → Expired
+```
+
+Each transition validates the current stage — you can't archive an Active scroll without first deprecating it. This prevents accidental knowledge loss.
+
 ## References
 
 1. Pat Helland (2007). "Life beyond Distributed Transactions: an Apostate's Opinion." *CIDR*.
