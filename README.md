@@ -1,128 +1,128 @@
-# Ternary Archive
+# ternary-archive
 
-**Ternary Archive** provides persistent storage and retrieval of ternary knowledge in balanced ternary {-1, 0, +1} — featuring immutable scrolls, multi-index lookup, lifecycle management, and conservation law verification.
+**Persistent storage and retrieval of ternary knowledge with conservation-law verification.**
+
+`ternary-archive` provides an append-only knowledge store where each record (a "scroll") is an immutable ternary-valued entry drawn from balanced ternary $\{-1, 0, +1\}$. It features multi-index lookup, catalog browsing, lifecycle management, and mathematical conservation verification ensuring that the archive's ternary balance tends toward zero.
 
 ## Why It Matters
 
-Knowledge bases need append-only storage for audit compliance, multi-dimensional indexing for fast retrieval, and integrity verification for trust. Ternary Archive models knowledge as immutable scrolls — once written, never modified, only superseded. The ternary value system {-1 (negation), 0 (neutral), +1 (affirmation)} naturally encodes knowledge polarity, enabling downstream reasoning about whether a fact affirms or contradicts a hypothesis.
+In a balanced ternary system, knowledge has *value* — and value must be conserved. Every record written to the archive carries a ternary charge: $-1$, $0$, or $+1$. Over time, the sum of all charges should remain near zero; a significant imbalance signals information drift, data corruption, or adversarial injection.
+
+This crate enforces that invariant through a `Conservation` tracker with $O(1)$ per-record overhead. Combined with multi-index retrieval (by category, key, and value) and a structured lifecycle (Active → Deprecated → Archived → Expired), the archive provides the persistence layer for ternary-native knowledge systems.
 
 ## How It Works
 
-### Scroll Data Model
+### Ternary Values and Scrolls
 
-```rust
-Scroll {
-    id: u64,                    // Unique identifier
-    category: String,           // Knowledge domain
-    key: String,                // Specific fact name
-    value: Ternary,             // {-1, 0, +1}
-    metadata: HashMap<String, String>,
-    timestamp: u64,             // Creation time
-}
-```
+Each scroll is an immutable record with a monotonically increasing ID:
 
-Scroll creation: **O(1)**. Immutable after creation — updates create new scrolls with incremented versions.
+$$\text{Scroll} = (\text{id},\; \text{category},\; \text{key},\; v,\; t)$$
+
+where $v \in \{-1, 0, +1\}$ is the ternary value and $t$ is a logical timestamp. Scrolls are write-once: once stored, their content never changes. This immutability enables safe concurrent reads without locking.
 
 ### Multi-Index Structure
 
-The `Index` maintains three HashMap-based indices:
+The archive maintains three inverted indexes as hash maps:
 
-```
-by_category: HashMap<String, Vec<u64>>    // Category → scroll IDs
-by_key:      HashMap<String, Vec<u64>>    // Key → scroll IDs
-by_value:    HashMap<Ternary, Vec<u64>>   // Value → scroll IDs
-```
+| Index | Key | Value | Lookup |
+|-------|-----|-------|--------|
+| `by_category` | `String` | `Vec<u64>` | $O(1)$ average |
+| `by_key` | `String` | `Vec<u64>` | $O(1)$ average |
+| `by_value` | `Ternary` | `Vec<u64>` | $O(1)$ average |
 
-Insertion into index: **O(1)** amortized (append to Vec). Lookup by any dimension: **O(1)** HashMap + **O(K)** for K matching IDs.
-
-### Lifecycle Management
-
-```
-Write → Active → Archived → Expired
-         ↑                      │
-         └── restore (if permitted)
-```
-
-Each scroll tracks its lifecycle state. Archived scrolls are excluded from default queries but available for explicit historical queries. Expiration: **O(N)** batch scan of timestamps.
+Insertion appends to each index in $O(1)$ amortized time. Retrieval returns a slice of scroll IDs in $O(1)$, followed by $O(k)$ to fetch $k$ scrolls from the main `HashMap<u64, Scroll>`.
 
 ### Conservation Law Verification
 
-The archive enforces conservation: the sum of all ternary values in a category should be stable:
+The `Conservation` tracker maintains a running sum and count:
+
+$$S = \sum_{i=1}^{n} v_i, \qquad \delta = \frac{S}{n}$$
+
+where $S$ is the total sum, $n$ is the record count, and $\delta \in [-1, +1]$ is the deviation ratio. The archive is **balanced** when $S = 0$.
+
+The `would_violate` check tests whether adding a new value would push $|S|$ beyond a threshold $\theta$:
+
+$$\text{would\_violate}(v, \theta) = |S + v| > \theta$$
+
+This is an $O(1)$ operation — no scan of existing records is needed because $S$ is maintained incrementally.
+
+### Knowledge Lifecycle
+
+The `ArchiveCurator` manages a four-stage lifecycle with enforced ordering:
 
 ```
-Σ values(category) at time T ≈ Σ values(category) at time T+1 ± tolerance
+Active ──deprecate()──▶ Deprecated ──archive()──▶ Archived ──expire()──▶ Expired
 ```
 
-Violations indicate data corruption or unauthorized modifications. Verification: **O(N)** per category.
+Transitions skip-proof: each stage can only transition to the next. Attempts to skip stages (e.g., Active → Archived) return `false` without modifying state.
+
+**Complexity:** All lifecycle operations are $O(1)$ hash map lookups and updates. The `count_by_stage` operation is $O(n)$ over all tracked scrolls.
+
+### Catalog Browsing
+
+The `Catalog` provides a hierarchical view grouped by category, storing full `Scroll` objects (not just IDs). This enables efficient category-level browsing in $O(1)$ for category lookup, with $O(k)$ to return $k$ scrolls in a category.
 
 ## Quick Start
 
+```toml
+[dependencies]
+ternary-archive = "0.1"
+```
+
 ```rust
-use ternary_archive::{Ternary, Scroll, Index};
+use ternary_archive::{Archive, Ternary, ArchiveCurator, LifecycleStage};
 
-let scroll = Scroll::new(1, "physics", "gravity_exists", Ternary::Pos, 1000)
-    .with_metadata("source", "experiment");
+let mut archive = Archive::new();
 
-let mut index = Index::new();
-index.add(&scroll);
+// Store knowledge
+let id1 = archive.store("physics", "momentum", Ternary::Pos, 100);
+let id2 = archive.store("physics", "drag", Ternary::Neg, 101);
+let id3 = archive.store("meta", "version", Ternary::Zero, 102);
 
-let results = index.by_category("physics");
-println!("Physics scrolls: {}", results.len());
+// Conservation check: +1 + (-1) + 0 = 0 → balanced
+assert!(archive.is_balanced());
+assert_eq!(archive.conservation_balance(), 0);
+
+// Multi-index retrieval
+assert_eq!(archive.find_by_category("physics").len(), 2);
+assert_eq!(archive.find_by_value(Ternary::Pos).len(), 1);
+
+// Lifecycle management
+let mut curator = ArchiveCurator::new();
+curator.register(id1);
+curator.deprecate(id1, "superseded by relativity");
+assert_eq!(curator.stage(id1), Some(LifecycleStage::Deprecated));
 ```
 
 ## API
 
-| Type | Description |
-|------|-------------|
-| `Scroll` | Immutable knowledge record with id, category, key, value, metadata |
-| `Ternary` | `Neg (-1)`, `Zero (0)`, `Pos (+1)` |
-| `Index` | Multi-dimensional lookup (by_category, by_key, by_value) |
-| `Archive` | Full archive with lifecycle management and conservation checks |
+| Type | Purpose | Key Methods |
+|------|---------|-------------|
+| `Ternary` | The {-1, 0, +1} value type | `from_i8()`, `to_i8()` |
+| `Scroll` | Immutable archive record | `id()`, `category()`, `key()`, `value()`, `with_metadata()` |
+| `Index` | Three-way inverted index | `lookup_category()`, `lookup_key()`, `lookup_value()` |
+| `Catalog` | Category-grouped browsing | `add()`, `browse()`, `categories()` |
+| `Conservation` | O(1) conservation tracker | `record()`, `balance()`, `is_balanced()`, `deviation()`, `would_violate()` |
+| `Archive` | Main knowledge store | `store()`, `retrieve()`, `find_by_*()`, `is_balanced()` |
+| `ArchiveCurator` | Lifecycle management | `register()`, `deprecate()`, `archive()`, `expire()` |
+| `LifecycleStage` | Active / Deprecated / Archived / Expired | — |
 
 ## Architecture Notes
 
-Ternary Archive provides the knowledge persistence layer for SuperInstance. In γ + η = C, archived Pos (+1) values represent γ (growth — confirmed knowledge) while Neg (-1) values represent η (avoidance — negated hypotheses). The conservation law on archives directly implements the C invariant. Integrates with `ternary-chronicle` for temporal narrative generation.
+The archive enforces the SuperInstance conservation law **γ + η = C**. Each ternary value contributes to the system's total charge: $+1$ values increase $\gamma$ (growth), $-1$ values increase $\eta$ (entropy), and $0$ values are neutral. The conservation invariant requires:
 
-See [ARCHITECTURE.md](https://github.com/SuperInstance/SuperInstance/blob/main/ARCHITECTURE.md) for knowledge management architecture.
+$$\sum_{i} v_i = \sum_{i} \gamma_i - \sum_{i} \eta_i \approx 0$$
 
+The `Conservation` tracker directly computes this sum in $O(1)$ per insertion. A balanced archive ($S = 0$) means the system is at equilibrium — growth and entropy are in perfect tension, satisfying the constraint $\gamma + \eta = C$.
 
-### Catalog Browsing
-
-```rust
-Catalog { entries: HashMap<String, Vec<Scroll>> }
-
-browse(category) → &[Scroll]    — O(1) HashMap lookup
-categories() → Vec<&str>        — O(C) for C categories
-```
-
-The catalog groups scrolls by category for human-friendly exploration and discovery.
-
-### Conservation Verification
-
-The `Conservation` tracker maintains:
-
-```
-balance = Σ scroll.value for all active scrolls    — O(N) computation
-is_balanced() → |balance| ≤ tolerance               — O(1) check
-```
-
-Violations indicate data corruption: if balance shifts unexpectedly, an unauthorized modification occurred. The tolerance is configurable — strict (0) for critical archives, loose (±N) for noisy environments.
-
-### Lifecycle Enforcement
-
-The `ArchiveCurator` enforces strict one-way transitions:
-
-```
-Active → deprecate(reason) → Deprecated → archive() → Archived → expire() → Expired
-```
-
-Each transition validates the current stage — you can't archive an Active scroll without first deprecating it. This prevents accidental knowledge loss.
+The lifecycle stages map to energy states: Active scrolls have high $\gamma$ (useful energy), Deprecated scrolls are transitioning to $\eta$, and Expired scrolls represent pure entropy — stored for audit but contributing no growth.
 
 ## References
 
-1. Pat Helland (2007). "Life beyond Distributed Transactions: an Apostate's Opinion." *CIDR*.
-2. Stonebraker, M. (2010). "SQL databases v. NoSQL databases." *Communications of the ACM*, 53(4).
-3. Lamport, L. (1998). "The Part-Time Parliament." *ACM Transactions on Computer Systems*, 16(2).
+- Cover, T.M. & Thomas, J.A. *Elements of Information Theory.* 2nd ed., Wiley, 2006. — Shannon entropy and information conservation.
+- Knuth, D.E. *The Art of Computer Programming, Vol. 3: Sorting and Searching.* §6.5, on multi-key retrieval structures.
+- Lamport, L. *The Part-Time Parliament.* ACM TOCS 1998. — Consensus and immutability in distributed logs.
+- Bernstein, P.A. & Newcomer, E. *Principles of Transaction Processing.* Ch. 7, on append-only storage and lifecycle management.
 
 ## License
 
